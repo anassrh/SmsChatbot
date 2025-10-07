@@ -1,0 +1,823 @@
+{
+  "name": "SMS CHATBOT",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ovh-sms-webhook",
+        "options": {}
+      },
+      "id": "51994a00-75e1-471c-8a64-b88528755d79",
+      "name": "Webhook OVH SMS",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -1500,
+        500
+      ],
+      "webhookId": "a82ad22e-72ec-44d2-ba01-74d4a114637f"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userMessage }}",
+        "options": {
+          "systemMessage": "Tu es JARVIS, assistant automatisé Audi par SMS. \nObjectif: informer à partir de notre documentation interne (Supabase Vector Store) et orienter vers un rendez-vous en concession si besoin.\nRéponses: françaises, concises (format SMS), professionnelles, sans emoji, vouvoiement, jamais d’invention.\n\nRÈGLES OUTIL (storeCars):\n1) TU DOIS appeler {storeCars} pour TOUT ce qui touche à Audi (marque, modèles, finitions, options, tarifs, caractéristiques).\n2) Si la question est VAGUE (“tu connais Audi ?”, “dis-m’en plus”), CRÉE une requête élargie pour {storeCars} \n   (ex. “Présentation Audi, gammes, modèles récents, points clés Q5, options, tarifs indicatifs”) puis appelle {storeCars}.\n3) Si {storeCars} renvoie des passages: réponds UNIQUEMENT avec ces éléments (1–3 points max), puis propose la brochure complète ou un rendez-vous.\n4) Si {storeCars} ne renvoie rien: dis-le explicitement et propose un rendez-vous ou un rappel par un conseiller.\n5) Tu ne réponds JAMAIS sans passer par {storeCars} lorsque la question concerne Audi.\n\nCOMPORTEMENT CONVERSATIONNEL:\n- Accueil sur premier message: “Bonjour, je suis Jarvis, l’assistant automatisé Audi. Comment puis-je vous aider ?”\n- Si demande d’infos → résume en 1 ligne puis {storeCars} → 1–3 faits concrets → propose brochure / rendez-vous.\n- Si demande de mise en relation → propose lien de prise de RDV ou rappel (matin / après-midi).\n- Si hors sujet/ou injurieux → réponse fixe prévue (redirige vers conseiller).\n- Toujours clair sur la source: “d’après notre documentation”.\n\nFORMAT DE RÉPONSE:\n- 1 à 3 phrases courtes. \n- Si info chiffrée, donner un ordre de grandeur et préciser “d’après notre documentation”.\n- Terminer souvent par une question utile (ex. “Souhaitez-vous la brochure complète ou un rendez-vous ?”).\n\nEXEMPLES DE STRATÉGIE RAG:\n- “tu connais bien Audi ?” → {storeCars} avec requête élargie (présentation Audi + gammes + Q5/Q3/A3 + tarifs indicatifs) → 2–3 points clés → propose brochure/RDV.\n- “différence Q5 vs Q3 ?” → {storeCars} avec “Q5 vs Q3: dimensions, motorisations, options, tarifs” → 2–3 différences clés → propose essai/RDV.\n- “prix Q5” → {storeCars} “tarifs conseillés Audi Q5 (année en cours)” → donner fourchette + mention documentation → proposer brochure/RDV.\n"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.8,
+      "position": [
+        -1000,
+        500
+      ],
+      "id": "071e00b2-ec0b-4ee7-ba12-fb5fd0fa2583",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Récupère la réponse de l'agent IA et le téléphone du node \"filtre\"\nconst aiText = $('AI Agent').first()?.json?.output ?? \"Désolé, je n'ai pas compris.\";\nlet phone = $('filtre').first()?.json?.userPhone ?? $('Webhook OVH SMS').first()?.json?.body?.senderid;\n\n// Nettoyage du numéro (garder + et chiffres)\nif (typeof phone === 'string') phone = phone.trim().replace(/\\s+/g, '');\n\n// Sécurité : on borne un message très long\nconst message = String(aiText).slice(0, 700);\n\nreturn { message, phone, success: true };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -360,
+        500
+      ],
+      "id": "ed9a8dc6-c306-449f-9d03-77914ac2acad",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Ovh-Application ",
+              "value": "={{ $json.headers[\"X-Ovh-Application\"] }}"
+            },
+            {
+              "name": "X-Ovh-Consumer",
+              "value": "={{ $json.headers[\"X-Ovh-Consumer\"] }}"
+            },
+            {
+              "name": "X-Ovh-Signature ",
+              "value": "={{ $json.headers['X-Ovh-Signature'] }}"
+            },
+            {
+              "name": "X-Ovh-Timestamp",
+              "value": "={{ $json.headers[\"X-Ovh-Timestamp\"] }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "={{ $json.headers[\"Content-Type\"] }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        340,
+        500
+      ],
+      "id": "2e4affe7-fc65-4138-9a7a-163fa8647c4c",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Code2 — version robuste: récup num tel, valide, signe, payload OVH\nreturn await (async () => {\n  // === TES CLÉS ===\nconst APP_KEY      = '8fc93556efc7578f';\nconst APP_SECRET   = 'c7bd6359b4c0e239ac951f32dcb25549';\nconst CONSUMER_KEY = '37de9f196a6338617d54407c430407e8';\n\n  // =================\n\n  // 1) Récupération sécurisée du message et du téléphone\n  // - priorité à Code1 (node précédent),\n  // - fallback sur 'filtre',\n  // - fallback brut sur le webhook OVH (senderid)\n  const msgFromPrev   = $json.message ?? $('Code1').first()?.json?.message;\n  const phoneFromPrev = $json.phone   ?? $('Code1').first()?.json?.phone;\n\n  const phoneFromFiltre  = $('filtre').first()?.json?.userPhone;\n  const phoneFromWebhook = $('Webhook OVH SMS').first()?.json?.body?.senderid;\n\n  let message = msgFromPrev ?? 'Réponse automatique';\n  let phoneRaw = phoneFromPrev ?? phoneFromFiltre ?? phoneFromWebhook ?? null;\n\n  // Nettoyage du téléphone -> garder + et chiffres\n  if (typeof phoneRaw === 'string') {\n    phoneRaw = phoneRaw.trim().replace(/\\s+/g, '');\n  }\n  // Si numéro sans + mais commence par 0 et tu veux forcer France, tu peux préfixer ici:\n  // if (phoneRaw && /^0\\d{9}$/.test(phoneRaw)) phoneRaw = '+33' + phoneRaw.slice(1);\n\n  // Validation simple\n  const phoneIsValid = typeof phoneRaw === 'string' && /^\\+?\\d{6,20}$/.test(phoneRaw);\n  if (!phoneIsValid) {\n    throw new Error(`Numéro invalide ou manquant pour OVH: \"${phoneRaw}\". \nSources: prev=${phoneFromPrev} | filtre=${phoneFromFiltre} | webhook=${phoneFromWebhook}`);\n  }\n\n  // 2) serviceName (depuis 'filtre' ou par défaut)\n  const serviceName = $('filtre').first()?.json?.serviceName ?? 'sms-uv7261-1';\n\n  // 3) Timestamp OVH (node \"OVH Time\" juste avant)\n  const ovhTimeRaw = $('OVH Time').first().json;\n  const ovhTime = Number(\n    (ovhTimeRaw && typeof ovhTimeRaw === 'object' && 'data' in ovhTimeRaw)\n      ? ovhTimeRaw.data\n      : ovhTimeRaw\n  );\n\n  // 4) Construire URL + body EXACTS\n  const method = 'POST';\n  const path   = `/1.0/sms/${serviceName}/jobs`;\n  const url    = `https://eu.api.ovh.com${path}`;\n\n  const bodyObj = {\n    message,\n    receivers: [phoneRaw],   // <— ICI on envoie un string valide\n    senderForResponse: true,\n  };\n  const bodyStr = JSON.stringify(bodyObj);\n\n  // 5) SHA-1 pur JS (pas de crypto.subtle)\n  function sha1Hex(str) {\n    const s = unescape(encodeURIComponent(str));\n    const bytes = new Uint8Array(s.length);\n    for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);\n    const l = bytes.length;\n    const withOne = new Uint8Array(((l + 9 + 63) >> 6) << 6);\n    withOne.set(bytes);\n    withOne[l] = 0x80;\n    const bitLen = l * 8;\n    withOne[withOne.length - 4] = (bitLen >>> 24) & 0xff;\n    withOne[withOne.length - 3] = (bitLen >>> 16) & 0xff;\n    withOne[withOne.length - 2] = (bitLen >>> 8) & 0xff;\n    withOne[withOne.length - 1] = bitLen & 0xff;\n    let h0=0x67452301,h1=0xEFCDAB89,h2=0x98BADCFE,h3=0x10325476,h4=0xC3D2E1F0;\n    const w = new Array(80);\n    const rol=(n,b)=>((n<<b)|(n>>> (32-b)))>>>0;\n    for (let i = 0; i < withOne.length; i += 64) {\n      for (let j = 0; j < 16; j++) {\n        const idx = i + j*4;\n        w[j] = ((withOne[idx]<<24)|(withOne[idx+1]<<16)|(withOne[idx+2]<<8)|(withOne[idx+3]))>>>0;\n      }\n      for (let j = 16; j < 80; j++) w[j] = rol(w[j-3]^w[j-8]^w[j-14]^w[j-16],1);\n      let a=h0,b=h1,c=h2,d=h3,e=h4;\n      for (let j=0;j<80;j++){\n        let f,k;\n        if (j<20){f=(b&c)|(~b&d);k=0x5A827999;}\n        else if (j<40){f=b^c^d;k=0x6ED9EBA1;}\n        else if (j<60){f=(b&c)|(b&d)|(c&d);k=0x8F1BBCDC;}\n        else {f=b^c^d;k=0xCA62C1D6;}\n        const temp=(rol(a,5)+f+e+k+w[j])>>>0;\n        e=d;d=c;c=rol(b,30)>>>0;b=a;a=temp;\n      }\n      h0=(h0+a)>>>0;h1=(h1+b)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;h4=(h4+e)>>>0;\n    }\n    const toHex=n=>('00000000'+n.toString(16)).slice(-8);\n    return toHex(h0)+toHex(h1)+toHex(h2)+toHex(h3)+toHex(h4);\n  }\n\n  const toSign = [APP_SECRET, CONSUMER_KEY, method, url, bodyStr, ovhTime].join('+');\n  const signature = '$1$' + sha1Hex(toSign);\n\n  // (debugs utiles si besoin)\n  console.log({ phoneRaw, ovhTime, url, bodyStr, signature });\n\n  // 6) Renvoi pour le node HTTP\n  return {\n    url,\n    headers: {\n      'Content-Type': 'application/json',\n      'X-Ovh-Application': APP_KEY,\n      'X-Ovh-Consumer': CONSUMER_KEY,\n      'X-Ovh-Timestamp': String(ovhTime),\n      'X-Ovh-Signature': signature,\n    },\n    body: bodyObj,\n  };\n})();\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        120,
+        500
+      ],
+      "id": "ae27e05f-7503-4eb0-a7e8-7f140335a144",
+      "name": "Code2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraire du webhook OVH\nconst body = $input.all()[0].json.body;\n\nconst userMessage = body.message;\nlet userPhone = String(body.senderid || body.msisdn || body.sender || '').trim().replace(/\\s+/g, '');\n\n// optionnel: normaliser\n// if (/^0\\d{9}$/.test(userPhone)) userPhone = '+33' + userPhone.slice(1);\n\nconst shortCode   = body.shortcode;\nconst serviceName = 'sms-df606163-1';\n\n// Clé de session (une conversation = un numéro)\nconst sessionId = `sms:${userPhone}`;\n\nreturn {\n  userMessage,\n  userPhone,\n  shortCode,\n  serviceName,\n  sessionId, // <<< IMPORTANT\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1300,
+        500
+      ],
+      "id": "d0aec22a-9fac-4bfd-ae81-f915b7a9b59e",
+      "name": "filtre"
+    },
+    {
+      "parameters": {
+        "url": "https://eu.api.ovh.com/1.0/auth/time",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -140,
+        500
+      ],
+      "id": "bc2cfbce-3257-47ed-bd6c-42c449ca44ac",
+      "name": "OVH Time"
+    },
+    {
+      "parameters": {
+        "content": "## GET MESSAGE\n\n",
+        "height": 280,
+        "width": 340,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1520,
+        380
+      ],
+      "id": "55115142-3a0f-4d17-953a-185637619fc1",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## REDACTION DU REPONSE PAR L'IA\n",
+        "height": 720,
+        "width": 440,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1120,
+        360
+      ],
+      "id": "dbb2b269-af82-4d87-8b56-d6ae963a3987",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## RPARSING ET FILTRAGE DU REPONSE\n\n",
+        "height": 340,
+        "width": 620,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -380,
+        360
+      ],
+      "id": "ec4a5f27-78b1-4269-92a3-dfc32706460c",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## RETOUR DU MSG VERS LE CLIENT\n",
+        "height": 340,
+        "width": 300,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        300,
+        360
+      ],
+      "id": "bb7b6072-8908-42b2-bcb5-01e133258420",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "##    SMS CHATBOT PAR L'IA\n",
+        "height": 980,
+        "width": 2560,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1560,
+        200
+      ],
+      "id": "2c23c667-b309-4b65-916b-6ae699dd507a",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "storeCars",
+        "toolDescription": "Use this to get information about the body shop",
+        "tableName": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1,
+      "position": [
+        -1880,
+        -1240
+      ],
+      "id": "8e3d1363-bf81-48a2-80d4-65e1831b48d9",
+      "name": "Supabase Vector Store",
+      "credentials": {
+        "supabaseApi": {
+          "id": "f5IzIF3VHisITQJk",
+          "name": "Supabase sms"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1,
+      "position": [
+        -940,
+        -360
+      ],
+      "id": "149d4e65-9552-4242-824a-d98d256fb44c",
+      "name": "Supabase Vector Store1",
+      "credentials": {
+        "supabaseApi": {
+          "id": "f5IzIF3VHisITQJk",
+          "name": "Supabase sms"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -1140,
+        -100
+      ],
+      "id": "4751f0af-10d8-404f-a3e7-782872202d32",
+      "name": "Embeddings OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "T071yJdr4IuIhvRk",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "binary",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1,
+      "position": [
+        -860,
+        -160
+      ],
+      "id": "6ca6da2e-0281-4ea7-b489-c0664c4927c0",
+      "name": "Default Data Loader"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        0
+      ],
+      "id": "f1513b70-a541-4ac9-9669-ccf4189e4f4f",
+      "name": "Recursive Character Text Splitter"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -1880,
+        -1060
+      ],
+      "id": "4dac12b4-1e08-4a19-b493-9492c6db6700",
+      "name": "Embeddings OpenAI1",
+      "credentials": {
+        "openAiApi": {
+          "id": "T071yJdr4IuIhvRk",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        -2020,
+        -1280
+      ],
+      "id": "d000432b-93c9-4ef4-9a8d-eba0814a60e8",
+      "name": "Postgres Chat Memory",
+      "credentials": {
+        "postgres": {
+          "id": "ad8Fgm6gT5EeX16n",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -2140,
+        -1280
+      ],
+      "id": "cc2cef8d-ad42-40ef-adf9-eca461e41030",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "T071yJdr4IuIhvRk",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "Architecture d'Agent IA Conversational avec Mémoire et Traitement de Texte",
+        "height": 640,
+        "width": 1060,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -2660,
+        -1560
+      ],
+      "id": "146bc633-3dc1-4e12-a58c-f609653519be",
+      "name": "Sticky Note5"
+    },
+    {
+      "parameters": {
+        "content": "## Workflow d'Intégration et de Traitement de Fichiers pour un Agent IA\n",
+        "height": 640,
+        "width": 1920,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1560,
+        -500
+      ],
+      "id": "364ff73f-f8a7-48be-8bc1-637b261f645a",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "formTitle": "CV",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "data",
+              "fieldType": "file",
+              "multipleFiles": false,
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [
+        -1400,
+        -360
+      ],
+      "id": "3f3c9aec-7a3d-4524-bec7-1d0bf8f09c8a",
+      "name": "On form submission",
+      "webhookId": "8cbb342b-ac8d-458d-99d0-bfe8e54d9c4f"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Récupérer la question de l'utilisateur\nconst question = $input.all()[0].json.message;\n\n// Vérifier si la question concerne le football ou les voitures\nif (question.toLowerCase().includes(\"football\") || question.toLowerCase().includes(\"joueur\")) {\n  return { sujet: \"football\" };\n} else if (question.toLowerCase().includes(\"voiture\") || question.toLowerCase().includes(\"voitures\")) {\n  return { sujet: \"voiture\" };\n} else {\n  return { sujet: \"inconnu\" };\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2220,
+        -1740
+      ],
+      "id": "909923ff-1e9c-4ca4-b8c2-2d9a31ee1836",
+      "name": "Code",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "16V7tcObxcPzScX-HkAPhX1hcuw3v2FIN",
+          "mode": "list",
+          "cachedResultName": "ai.txt",
+          "cachedResultUrl": "https://drive.google.com/file/d/16V7tcObxcPzScX-HkAPhX1hcuw3v2FIN/view?usp=drivesdk"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2240,
+        -1800
+      ],
+      "id": "858e6953-047a-481a-83db-5ccd23a3abb3",
+      "name": "Download file",
+      "credentials": {
+        "googleApi": {
+          "id": "t1ildCohVpEI4zFc",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are a helpful assistant; you will use the vector databse o retrieve relevant information and respond to the user's querry"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 1.7,
+      "position": [
+        -2060,
+        -1480
+      ],
+      "id": "c080ee00-a437-485d-96a4-989f8d35ff94",
+      "name": "AI Agent1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -2500,
+        -1480
+      ],
+      "id": "44750fa8-7109-4027-8880-6cfdcd30ccc3",
+      "name": "When chat message received",
+      "webhookId": "a16fbeae-5611-437a-8e28-b9b7a9a47265"
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolName": "storeCars",
+        "toolDescription": "Utilise cet outil pour rechercher dans la documentation Audi (tarifs conseillés, brochures, options, caractéristiques techniques, fiches produits).\nTU DOIS appeler cet outil pour toute question liée à Audi (même générale). \nSi la question est vague (“tu connais Audi ?”), génère une requête élargie (“Présentation Audi, gammes actuelles, points clés, tarifs indicatifs Q5/Q3/A3…”) et appelle l’outil.\nSi l’outil ne retourne rien, dis-le clairement et propose un rendez-vous avec un conseiller.\n",
+        "tableName": {
+          "__rl": true,
+          "value": "documents",
+          "mode": "list",
+          "cachedResultName": "documents"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreSupabase",
+      "typeVersion": 1,
+      "position": [
+        -800,
+        740
+      ],
+      "id": "a9e10492-e2f6-477e-b65a-1a6902feff2b",
+      "name": "Supabase Vector Store2",
+      "credentials": {
+        "supabaseApi": {
+          "id": "f5IzIF3VHisITQJk",
+          "name": "Supabase sms"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -800,
+        900
+      ],
+      "id": "822c4cb7-5cd1-44f4-9537-33b4e724109b",
+      "name": "Embeddings OpenAI2",
+      "credentials": {
+        "openAiApi": {
+          "id": "T071yJdr4IuIhvRk",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.3,
+      "position": [
+        -920,
+        740
+      ],
+      "id": "cad3d14d-2d12-4641-8e6e-ff20e82a2656",
+      "name": "Postgres Chat Memory1",
+      "credentials": {
+        "postgres": {
+          "id": "ad8Fgm6gT5EeX16n",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        -1080,
+        740
+      ],
+      "id": "f3c7b3bb-fbf4-48b2-8128-e0b5e686ff2d",
+      "name": "OpenAI Chat Model2",
+      "credentials": {
+        "openAiApi": {
+          "id": "T071yJdr4IuIhvRk",
+          "name": "OpenAi account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook OVH SMS": {
+      "main": [
+        [
+          {
+            "node": "filtre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "OVH Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "filtre": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OVH Time": {
+      "main": [
+        [
+          {
+            "node": "Code2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Vector Store": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store1",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Supabase Vector Store1",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recursive Character Text Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI1": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        []
+      ]
+    },
+    "Download file": {
+      "main": [
+        []
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Supabase Vector Store1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI2": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Supabase Vector Store2",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Postgres Chat Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Vector Store2": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "32b0e4be-9628-4111-b2ce-5fcacae46005",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "782dc3894978243c9249feb320237edba54104afeb26422ad7d68468d824fd16"
+  },
+  "id": "6Za2coL4V2B0v8PN",
+  "tags": []
+}
